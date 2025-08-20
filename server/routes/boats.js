@@ -1,10 +1,9 @@
 import express from 'express';
 import { body, query, validationResult } from 'express-validator';
-import { PrismaClient } from '@prisma/client';
 import { authenticateToken, requireRole, requireOwnership } from '../middleware/auth.js';
+import Boat from '../models/Boat.js';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
 // Get all boats with filters
 router.get('/', [
@@ -108,53 +107,12 @@ router.get('/', [
     }
 
     const [boats, total] = await Promise.all([
-      prisma.boat.findMany({
-        where,
-        include: {
-          location: true,
-          owner: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              avatar: true
-            }
-          },
-          reviews: {
-            select: {
-              rating: true
-            }
-          },
-          _count: {
-            select: {
-              reviews: true,
-              bookings: true
-            }
-          }
-        },
-        orderBy,
-        skip,
-        take: parseInt(limit)
-      }),
-      prisma.boat.count({ where })
+      Boat.find({}).skip(skip).limit(parseInt(limit)),
+      Boat.countDocuments({})
     ]);
 
-    // Calculate average ratings
-    const boatsWithRatings = boats.map(boat => {
-      const avgRating = boat.reviews.length > 0
-        ? boat.reviews.reduce((sum, review) => sum + review.rating, 0) / boat.reviews.length
-        : 0;
-      
-      const { reviews, ...boatData } = boat;
-      return {
-        ...boatData,
-        avgRating: Math.round(avgRating * 10) / 10,
-        reviewCount: boat._count.reviews
-      };
-    });
-
     res.json({
-      boats: boatsWithRatings,
+      boats,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -171,45 +129,7 @@ router.get('/', [
 // Get single boat
 router.get('/:id', async (req, res) => {
   try {
-    const boat = await prisma.boat.findUnique({
-      where: { id: req.params.id },
-      include: {
-        location: true,
-        owner: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-            createdAt: true
-          }
-        },
-        reviews: {
-          include: {
-            user: {
-              select: {
-                firstName: true,
-                lastName: true,
-                avatar: true
-              }
-            }
-          },
-          orderBy: { createdAt: 'desc' }
-        },
-        availabilities: {
-          where: {
-            date: { gte: new Date() }
-          },
-          orderBy: { date: 'asc' }
-        },
-        _count: {
-          select: {
-            reviews: true,
-            bookings: true
-          }
-        }
-      }
-    });
+    const boat = await Boat.findById(req.params.id);
 
     if (!boat) {
       return res.status(404).json({ message: 'Boat not found' });
@@ -279,20 +199,7 @@ router.post('/', authenticateToken, requireRole(['SELLER', 'ADMIN']), [
       rules: req.body.rules || []
     };
 
-    const boat = await prisma.boat.create({
-      data: boatData,
-      include: {
-        location: true,
-        owner: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true
-          }
-        }
-      }
-    });
+    const boat = await Boat.create(boatData);
 
     res.status(201).json(boat);
   } catch (error) {
@@ -302,7 +209,7 @@ router.post('/', authenticateToken, requireRole(['SELLER', 'ADMIN']), [
 });
 
 // Update boat
-router.put('/:id', authenticateToken, requireOwnership('boat'), [
+router.put('/:id', authenticateToken, requireOwnership('boat', Boat), [
   body('title').optional().trim().isLength({ min: 1, max: 100 }),
   body('description').optional().trim().isLength({ min: 10, max: 2000 }),
   body('pricePerDay').optional().isFloat({ min: 1 }),
@@ -314,21 +221,7 @@ router.put('/:id', authenticateToken, requireOwnership('boat'), [
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const boat = await prisma.boat.update({
-      where: { id: req.params.id },
-      data: req.body,
-      include: {
-        location: true,
-        owner: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true
-          }
-        }
-      }
-    });
+    const boat = await Boat.findByIdAndUpdate(req.params.id, req.body, { new: true });
 
     res.json(boat);
   } catch (error) {
@@ -338,11 +231,9 @@ router.put('/:id', authenticateToken, requireOwnership('boat'), [
 });
 
 // Delete boat
-router.delete('/:id', authenticateToken, requireOwnership('boat'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireOwnership('boat', Boat), async (req, res) => {
   try {
-    await prisma.boat.delete({
-      where: { id: req.params.id }
-    });
+    await Boat.findByIdAndDelete(req.params.id);
 
     res.json({ message: 'Boat deleted successfully' });
   } catch (error) {
@@ -354,20 +245,8 @@ router.delete('/:id', authenticateToken, requireOwnership('boat'), async (req, r
 // Get locations
 router.get('/locations/all', async (req, res) => {
   try {
-    const locations = await prisma.location.findMany({
-      include: {
-        _count: {
-          select: {
-            boats: {
-              where: { isActive: true }
-            }
-          }
-        }
-      },
-      orderBy: { name: 'asc' }
-    });
-
-    res.json(locations);
+    // Locations not implemented in Mongo version yet
+    res.json([]);
   } catch (error) {
     console.error('Get locations error:', error);
     res.status(500).json({ message: 'Server error' });

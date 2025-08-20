@@ -6,7 +6,8 @@ const boatSchema = new mongoose.Schema({
   capacity: Number,
   pricePerDay: Number,
   description: String,
-  ownerId: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
+  ownerId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  isActive: { type: Boolean, default: true }
 });
  
 export default mongoose.model("Boat", boatSchema);

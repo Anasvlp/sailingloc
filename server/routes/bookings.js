@@ -1,10 +1,10 @@
 import express from 'express';
 import { body, query, validationResult } from 'express-validator';
-import { PrismaClient } from '@prisma/client';
 import { authenticateToken, requireOwnership } from '../middleware/auth.js';
+import Booking from '../models/Booking.js';
+import Boat from '../models/Boat.js';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
 // Get user bookings
 router.get('/', authenticateToken, [
@@ -32,29 +32,11 @@ router.get('/', authenticateToken, [
     };
 
     const [bookings, total] = await Promise.all([
-      prisma.booking.findMany({
-        where,
-        include: {
-          boat: {
-            include: {
-              location: true,
-              owner: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  avatar: true
-                }
-              }
-            }
-          },
-          payment: true
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: parseInt(limit)
-      }),
-      prisma.booking.count({ where })
+      Booking.find({ userId: req.user.id })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      Booking.countDocuments({ userId: req.user.id })
     ]);
 
     res.json({
@@ -75,38 +57,7 @@ router.get('/', authenticateToken, [
 // Get single booking
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
-    const booking = await prisma.booking.findUnique({
-      where: { id: req.params.id },
-      include: {
-        boat: {
-          include: {
-            location: true,
-            owner: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                avatar: true,
-                email: true,
-                phone: true
-              }
-            }
-          }
-        },
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-            email: true,
-            phone: true
-          }
-        },
-        payment: true,
-        review: true
-      }
-    });
+    const booking = await Booking.findById(req.params.id);
 
     if (!booking) {
       return res.status(404).json({ message: 'Booking not found' });
@@ -144,10 +95,7 @@ router.post('/', authenticateToken, [
     const { boatId, startDate, endDate, guestCount, totalPrice, message } = req.body;
 
     // Check if boat exists and is available
-    const boat = await prisma.boat.findUnique({
-      where: { id: boatId },
-      include: { owner: true }
-    });
+    const boat = await Boat.findById(boatId);
 
     if (!boat) {
       return res.status(404).json({ message: 'Boat not found' });
@@ -162,31 +110,14 @@ router.post('/', authenticateToken, [
     }
 
     // Check for conflicting bookings
-    const conflictingBooking = await prisma.booking.findFirst({
-      where: {
-        boatId,
-        status: { in: ['PENDING', 'CONFIRMED'] },
-        OR: [
-          {
-            AND: [
-              { startDate: { lte: new Date(startDate) } },
-              { endDate: { gte: new Date(startDate) } }
-            ]
-          },
-          {
-            AND: [
-              { startDate: { lte: new Date(endDate) } },
-              { endDate: { gte: new Date(endDate) } }
-            ]
-          },
-          {
-            AND: [
-              { startDate: { gte: new Date(startDate) } },
-              { endDate: { lte: new Date(endDate) } }
-            ]
-          }
-        ]
-      }
+    const conflictingBooking = await Booking.findOne({
+      boatId,
+      status: { $in: ['PENDING', 'CONFIRMED'] },
+      $or: [
+        { $and: [ { startDate: { $lte: new Date(startDate) } }, { endDate: { $gte: new Date(startDate) } } ] },
+        { $and: [ { startDate: { $lte: new Date(endDate) } }, { endDate: { $gte: new Date(endDate) } } ] },
+        { $and: [ { startDate: { $gte: new Date(startDate) } }, { endDate: { $lte: new Date(endDate) } } ] }
+      ]
     });
 
     if (conflictingBooking) {
@@ -194,33 +125,16 @@ router.post('/', authenticateToken, [
     }
 
     // Create booking
-    const booking = await prisma.booking.create({
-      data: {
-        userId: req.user.id,
-        boatId,
-        startDate: new Date(startDate),
-        endDate: new Date(endDate),
-        guestCount,
-        totalPrice,
-        deposit: boat.deposit,
-        message,
-        status: 'PENDING'
-      },
-      include: {
-        boat: {
-          include: {
-            location: true,
-            owner: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                avatar: true
-              }
-            }
-          }
-        }
-      }
+    const booking = await Booking.create({
+      userId: req.user.id,
+      boatId,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      guestCount,
+      totalPrice,
+      deposit: boat.deposit,
+      message,
+      status: 'PENDING'
     });
 
     res.status(201).json(booking);
@@ -242,10 +156,7 @@ router.put('/:id/status', authenticateToken, [
 
     const { status } = req.body;
 
-    const booking = await prisma.booking.findUnique({
-      where: { id: req.params.id },
-      include: { boat: true }
-    });
+    const booking = await Booking.findById(req.params.id);
 
     if (!booking) {
       return res.status(404).json({ message: 'Booking not found' });
@@ -260,25 +171,7 @@ router.put('/:id/status', authenticateToken, [
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    const updatedBooking = await prisma.booking.update({
-      where: { id: req.params.id },
-      data: { status },
-      include: {
-        boat: {
-          include: {
-            location: true,
-            owner: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                avatar: true
-              }
-            }
-          }
-        }
-      }
-    });
+    const updatedBooking = await Booking.findByIdAndUpdate(req.params.id, { status }, { new: true });
 
     res.json(updatedBooking);
   } catch (error) {
@@ -288,21 +181,16 @@ router.put('/:id/status', authenticateToken, [
 });
 
 // Cancel booking
-router.delete('/:id', authenticateToken, requireOwnership('booking'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireOwnership('booking', Booking), async (req, res) => {
   try {
-    const booking = await prisma.booking.findUnique({
-      where: { id: req.params.id }
-    });
+    const booking = await Booking.findById(req.params.id);
 
     if (!booking) {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
     // Update status to cancelled instead of deleting
-    await prisma.booking.update({
-      where: { id: req.params.id },
-      data: { status: 'CANCELLED' }
-    });
+    await Booking.findByIdAndUpdate(req.params.id, { status: 'CANCELLED' });
 
     res.json({ message: 'Booking cancelled successfully' });
   } catch (error) {
