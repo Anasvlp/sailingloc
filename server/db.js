@@ -6,7 +6,7 @@ const uri = process.env.MONGO_URI;
 if (!uri) {
   console.error("❌ MONGO_URI non défini. Vérifie ton fichier .env !");
   process.exit(1);
-}
+} 
  
 const connectDB = async () => {
   try {
