@@ -2,11 +2,10 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { body, validationResult } from 'express-validator';
-import { PrismaClient } from '@prisma/client';
 import { authenticateToken } from '../middleware/auth.js';
+import User from '../models/User.js';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
 // Register
 router.post('/register', [
@@ -24,9 +23,7 @@ router.post('/register', [
     const { email, password, firstName, lastName, role = 'USER' } = req.body;
 
     // Check if user exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email }
-    });
+    const existingUser = await User.findOne({ email });
 
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists' });
@@ -36,27 +33,26 @@ router.post('/register', [
     const hashedPassword = await bcrypt.hash(password, 12);
 
     // Create user
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        firstName,
-        lastName,
-        role
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        avatar: true
-      }
+    const created = await User.create({
+      email,
+      password: hashedPassword,
+      firstName,
+      lastName,
+      role
     });
+
+    const user = {
+      id: created.id,
+      email: created.email,
+      firstName: created.firstName,
+      lastName: created.lastName,
+      role: created.role,
+      avatar: created.avatar
+    };
 
     // Generate JWT
     const token = jwt.sign(
-      { userId: user.id },
+      { id: user.id },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -86,9 +82,7 @@ router.post('/login', [
     const { email, password } = req.body;
 
     // Find user
-    const user = await prisma.user.findUnique({
-      where: { email }
-    });
+    const user = await User.findOne({ email });
 
     if (!user) {
       return res.status(400).json({ message: 'Invalid credentials' });
@@ -107,13 +101,9 @@ router.post('/login', [
       { expiresIn: '7d' }
     );
 
-    const { password: _, ...userWithoutPassword } = user;
+    const { password: _pwd, ...rest } = user.toObject();
 
-    res.json({
-      message: 'Login successful',
-      token,
-      user: userWithoutPassword
-    });
+    res.json({ message: 'Login successful', token, user: rest });
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -129,7 +119,7 @@ router.get('/me', authenticateToken, async (req, res) => {
 router.post('/refresh', authenticateToken, async (req, res) => {
   try {
     const token = jwt.sign(
-      { userId: req.user.id },
+      { id: req.user.id },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );

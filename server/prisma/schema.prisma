@@ -58,7 +58,8 @@ model User {
   bookings    Booking[]
   reviews     Review[]
   favorites   Favorite[]
-  messages    Message[]
+  sentMessages     Message[] @relation("SentMessages")
+  receivedMessages Message[] @relation("ReceivedMessages")
   
   @@map("users")
 }
